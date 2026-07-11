@@ -12,8 +12,8 @@ services:
       - ./data:/data/db
       - ./data/log:/var/log/mongodb/
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: qwerty
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_INITDB_ROOT_USERNAME:?Set MONGO_INITDB_ROOT_USERNAME in .env}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD in .env}"
     networks:
       - gateway
       - kafka
@@ -88,6 +88,11 @@ services:
       - "4000:4000"
     volumes:
       - ./Login:/app
+    environment:
+      MONGO_URI: "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env}"
     depends_on:
       - mongo
       - eureka
@@ -97,6 +102,9 @@ services:
   injector:
     build: ./Injector    
     container_name: injector
+    environment:
+      RAPIDAPI_KEY: "${RAPIDAPI_KEY:?Set RAPIDAPI_KEY in .env}"
+      RAPIDAPI_HOST: "${RAPIDAPI_HOST:-steam2.p.rapidapi.com}"
     depends_on:
       - kafka
       - zookeeper
@@ -120,6 +128,8 @@ services:
     restart: always
     ports:
       - "4002:4002"
+    environment:
+      MONGO_URI: "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/"
     depends_on:
       - mongo
       - kafka
@@ -149,6 +159,9 @@ services:
       - ./datos:/app
     ports:
       - "5000:5000"
+    environment:
+      MONGO_URI: "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}"
     networks:
       - gateway
     depends_on:

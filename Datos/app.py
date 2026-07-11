@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from urllib.parse import urlencode
 import re
@@ -13,11 +14,11 @@ from pymongo import MongoClient
 #Creamos la aplicacion de Flask
 app = Flask(__name__)
 #Llave secreta para los JWT
-SECRET_KEY = 'your-secret-key'
+SECRET_KEY = os.environ["JWT_SECRET_KEY"]
 JWT_ALGORITHM = 'HS256'
 
 #Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient('mongodb://root:qwerty@mongodb:27017/')
+client = MongoClient(os.environ["MONGO_URI"])
 
 #Nombre de la base de datos que creamos dentro del docker
 db = client['projectCDS']

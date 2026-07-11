@@ -1,7 +1,11 @@
+import os
 import requests
 from kafka import KafkaProducer
 import json
 import time
+
+RAPIDAPI_KEY = os.environ["RAPIDAPI_KEY"]
+RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "steam2.p.rapidapi.com")
 
 ##########################################################################################################################
 # INJECCION A KAFKA
@@ -37,8 +41,8 @@ for i in range(ord('A'), ord('Z') + 1):
 
     headers = {
         "content-type": "application/octet-stream",
-        "X-RapidAPI-Key": "9a17eb8243msh97cb55bfa67f0dep1a95dajsna2cd15908c23",
-        "X-RapidAPI-Host": "steam2.p.rapidapi.com"
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST
     }
 
     response = requests.get(url, headers=headers)

@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import os
 import time
 from urllib.parse import urlencode
 
@@ -19,7 +20,7 @@ from pymongo import MongoClient
 #Creamos la aplicacion de Flask
 app = Flask(__name__)
 #Llave secreta para los JWT
-SECRET_KEY = 'your-secret-key'
+SECRET_KEY = os.environ["JWT_SECRET_KEY"]
 JWT_ALGORITHM = 'HS256'
 
 
@@ -28,7 +29,7 @@ JWT_ALGORITHM = 'HS256'
 
 
 #Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient('mongodb://root:qwerty@mongodb:27017/')
+client = MongoClient(os.environ["MONGO_URI"])
 
 #Nombre de la base de datos que creamos dentro del docker
 db = client['projectCDS']
@@ -38,8 +39,8 @@ collection = db['usuarios']
 
 oauth = OAuth(app)
 #Variables de Google
-GOOGLE_CLIENT_ID = "483162406056-ppi5hsh1h30e8lq51cjpnt0re0fvt3sd.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
+GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 
 def jwt_required(fn):
     @wraps(fn)

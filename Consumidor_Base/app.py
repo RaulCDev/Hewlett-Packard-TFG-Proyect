@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, redirect, request, jsonify, url_for
 from pymongo import MongoClient
 from flask_cors import CORS, cross_origin
@@ -8,7 +10,7 @@ import json
 app = Flask(__name__)
 
 #Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient('mongodb://root:qwerty@mongo:27017/')
+client = MongoClient(os.environ["MONGO_URI"])
 
 #Nombre de la base de datos que creamos dentro del docker
 db = client['projectCDS']

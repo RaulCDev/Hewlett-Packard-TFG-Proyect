@@ -29,3 +29,13 @@ front-next/build/Release
 # Dependency directories
 front-next/node_modules
 
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and Python artifacts
+data/
+**/__pycache__/
+*.py[cod]
+
