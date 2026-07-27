@@ -1,61 +1,77 @@
 import os
 
-from flask import Flask, redirect, request, jsonify, url_for
+from flask import Flask, jsonify, request
+from flask_cors import cross_origin
 from pymongo import MongoClient
-from flask_cors import CORS, cross_origin
-import re
-import json
 
-#Creamos la aplicacion de Flask
+try:
+    from .normalization import normalize_game
+except ImportError:
+    from normalization import normalize_game
+
+
 app = Flask(__name__)
+client = MongoClient(
+    os.getenv(
+        "MONGO_URI",
+        "mongodb://gameshop:gameshop-development-password@mongo:27017/",
+    )
+)
+db = client["projectCDS"]
+collection = db["juegos"]
+integration_status_collection = db["integration_status"]
 
-#Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient(os.environ["MONGO_URI"])
-
-#Nombre de la base de datos que creamos dentro del docker
-db = client['projectCDS']
-#Nombre del documento en el que vamos a guardar a los usuarios
-collection = db['juegos']
 
 @cross_origin()
-@app.route('/save_games', methods=['POST'])
+@app.route("/save_games", methods=["POST"])
 def guardar_juegos():
-    # Obtener el JSON de la solicitud HTTP POST
     games = request.get_json()
+    if not isinstance(games, list):
+        return jsonify(
+            {"success": False, "message": "Se esperaba una lista de juegos."}
+        ), 400
 
-    if games:
-        # Lista para almacenar los juegos que serán insertados
-        new_games = []
-        for game in games:
-            # Extraer el porcentaje de la cadena de texto en "reviewSummary"
-            if 'reviewSummary' in game:
-                match = re.search(r'(\d+)%', game['reviewSummary'])
-                if match:
-                    percentage = int(match.group(1))  # convertir la cadena de texto extraída a un número entero
-                    game['reviewPercentage'] = percentage  # añadir el porcentaje como un nuevo parámetro
-            else:
-                game['reviewPercentage'] = None  # O el valor que prefieras en caso de que 'reviewSummary' no esté presente
-
-            # Comprobar si el juego ya está en la colección
-            print(game)
-            if game.get("appId") is None:
-                existing_game = "No tiene appId"#Añadiendo algun valor no introduce el juego en la lista
-            else:
-                appid = game["appId"]
-                existing_game = collection.find_one({"appId": appid})
-
-            # Si el juego no está en la colección, añadirlo a la lista de nuevos juegos
-            if existing_game is None:
-                new_games.append(game)
-
-        # Insertar todos los juegos nuevos en la colección de MongoDB
-        if new_games:
-            collection.insert_many(new_games)
-            return {"success": True, "message": "Juegos guardados correctamente."}
+    inserted = 0
+    skipped = 0
+    source = None
+    for game in games:
+        normalized = normalize_game(game)
+        if normalized is None:
+            skipped += 1
+            continue
+        if normalized.get("dataSource") in {"rapidapi", "fixture"}:
+            source = normalized["dataSource"]
+        result = collection.update_one(
+            {"appId": normalized["appId"]},
+            {"$setOnInsert": normalized},
+            upsert=True,
+        )
+        if result.upserted_id is not None:
+            inserted += 1
         else:
-            return {"success": False, "message": "Todos los juegos ya están registrados en la base de datos."}
-    else:
-        return {"success": False, "message": "No se recibió JSON en la solicitud."}
+            skipped += 1
 
-if __name__ == '__main__':
-    app.run(debug=True, port=4002, host="0.0.0.0")
+    if source:
+        integration_status_collection.update_one(
+            {"service": "rapidapi"},
+            {"$set": {"source": source}},
+            upsert=True,
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "received": len(games),
+            "inserted": inserted,
+            "skipped": skipped,
+        }
+    )
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+
+if __name__ == "__main__":
+    app.run(debug=False, port=4002, host="0.0.0.0")

@@ -1,51 +1,55 @@
-import os
-import requests
-from kafka import KafkaProducer
 import json
+import logging
+import os
 import time
+from pathlib import Path
 
-RAPIDAPI_KEY = os.environ["RAPIDAPI_KEY"]
-RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "steam2.p.rapidapi.com")
+from kafka import KafkaProducer
 
-##########################################################################################################################
-# INJECCION A KAFKA
-##########################################################################################################################
-
-def aniadir(juegos):
-    # Configurar el productor de Kafka
-    producer = KafkaProducer(bootstrap_servers=['kafka:9092'])
-
-    # Serializar los datos en formato JSON
-    serialized_data = json.dumps(juegos).encode('utf-8')
-
-    # Enviar los datos a Kafka
-    print(serialized_data)
-    producer.send('games', serialized_data)
-
-    # Cerrar el productor de Kafka
-    producer.close()
-
-##########################################################################################################################
-# PETICION API EXTERNA
-##########################################################################################################################
+from ingestion import chunk_games, select_game_source
 
 
-# pausa la ejecución por 120 segundos, que es igual a 2 minutos
-time.sleep(120)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+LOGGER = logging.getLogger("injector")
+FIXTURE_PATH = Path(
+    os.getenv(
+        "RAPIDAPI_FIXTURE_PATH",
+        str(Path(__file__).parent / "data" / "rapidapi-steam-games.json"),
+    )
+)
 
-#Bucle que pide juegos con todas las letras del abcedario y llama a la funcion que lo injecta en kafka
-for i in range(ord('A'), ord('Z') + 1):
-    letter = chr(i)
 
-    url = "https://steam2.p.rapidapi.com/search/" + letter + "/page/1"
+def connect_producer(attempts=30, retry_seconds=2):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return KafkaProducer(
+                bootstrap_servers=["kafka:9092"],
+                value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            )
+        except Exception as error:
+            last_error = error
+            LOGGER.warning("Kafka is not ready (attempt %s/%s)", attempt, attempts)
+            time.sleep(retry_seconds)
+    raise RuntimeError("Could not connect to Kafka") from last_error
 
-    headers = {
-        "content-type": "application/octet-stream",
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST
-    }
 
-    response = requests.get(url, headers=headers)
-    aniadir(response.json())
-    time.sleep(60)
+def main():
+    source, games = select_game_source(os.environ, FIXTURE_PATH)
+    LOGGER.info("source=%s games=%s", source, len(games))
+    games = [dict(game, dataSource=source) for game in games]
 
+    producer = connect_producer()
+    try:
+        published = 0
+        for batch in chunk_games(games, size=50):
+            producer.send("games", batch).get(timeout=30)
+            published += len(batch)
+        producer.flush(timeout=30)
+        LOGGER.info("published=%s", published)
+    finally:
+        producer.close(timeout=30)
+
+
+if __name__ == "__main__":
+    main()

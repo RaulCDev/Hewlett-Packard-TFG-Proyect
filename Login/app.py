@@ -1,7 +1,8 @@
 import asyncio
 import datetime
+import logging
 import os
-import time
+import secrets
 from urllib.parse import urlencode
 
 import cachecontrol
@@ -9,19 +10,57 @@ import jwt
 import google.auth.transport.requests
 import requests
 from authlib.integrations.flask_client import OAuth
-from flask import Flask, redirect, request, jsonify
+from flask import Flask, redirect, request, jsonify, session
 from functools import wraps
+from google.auth import exceptions as google_auth_exceptions
 from google.oauth2 import id_token
 from py_eureka_client.eureka_client import EurekaClient
 from pymongo import MongoClient
+
+try:
+    from .integrations import (
+        build_google_authorization_url,
+        google_identity_from_claims,
+        google_integration_status,
+        redact_oauth_callback_log,
+    )
+except ImportError:
+    from integrations import (
+        build_google_authorization_url,
+        google_identity_from_claims,
+        google_integration_status,
+        redact_oauth_callback_log,
+    )
+
+
+LOGGER = logging.getLogger("login")
+
+
+class OAuthCallbackLogFilter(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = redact_oauth_callback_log(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                redact_oauth_callback_log(value)
+                if isinstance(value, str)
+                else value
+                for value in record.args
+            )
+        return True
+
+
+logging.getLogger("werkzeug").addFilter(OAuthCallbackLogFilter())
 
 
 
 #Creamos la aplicacion de Flask
 app = Flask(__name__)
 #Llave secreta para los JWT
-SECRET_KEY = os.environ["JWT_SECRET_KEY"]
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "gameshop-development-jwt-secret-change-me")
 JWT_ALGORITHM = 'HS256'
+app.secret_key = SECRET_KEY
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
 
 #Le damos "CORS" para poder tratar con el error que suge al hacer peticiones
@@ -29,7 +68,7 @@ JWT_ALGORITHM = 'HS256'
 
 
 #Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient(os.environ["MONGO_URI"])
+client = MongoClient(os.getenv("MONGO_URI", "mongodb://gameshop:gameshop-development-password@mongo:27017/"))
 
 #Nombre de la base de datos que creamos dentro del docker
 db = client['projectCDS']
@@ -39,8 +78,12 @@ collection = db['usuarios']
 
 oauth = OAuth(app)
 #Variables de Google
-GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
-GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
+GOOGLE_CALLBACK_URI = os.getenv(
+    "GOOGLE_CALLBACK_URI", "http://localhost:8081/api/login/callback"
+)
+FRONTEND_GOOGLE_SUCCESS_URI = os.getenv(
+    "FRONTEND_GOOGLE_SUCCESS_URI", "http://localhost:3000/inicio_exitoso_google"
+)
 
 def jwt_required(fn):
     @wraps(fn)
@@ -151,37 +194,64 @@ def create_token(identity):
 @app.route('/user/login/google', methods=['GET'])
 def loginUser_Google():
     # Enviar la solicitud de autorizaciÃ³n de Google
-    auth_url = "https://accounts.google.com/o/oauth2/auth"
-    auth_params = {
-        "response_type": "code",
-        "client_id": GOOGLE_CLIENT_ID,
-        "scope": "openid email profile",
-        "redirect_uri": "http://localhost:8081/api/login/callback",
-        "state": "state_parameter_passthrough_value",
-    }
-    return jsonify({'link': f"{auth_url}?{urlencode(auth_params)}"})
+    status = google_integration_status(os.environ)
+    if not status["configured"]:
+        return jsonify(status), 503
+
+    state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = state
+    return jsonify({
+        "link": build_google_authorization_url(
+            os.environ,
+            redirect_uri=GOOGLE_CALLBACK_URI,
+            state=state,
+        )
+    })
 
 #Funcion que llama google despues del intento de inicio de sesion
 @app.route('/callback')
 def oauth2callback():
     # Recuperar el cÃ³digo de autorizaciÃ³n de la solicitud de autorizaciÃ³n de Google
-    print('Mariano Rajoy')
+    status = google_integration_status(os.environ)
+    if not status["configured"]:
+        return jsonify(status), 503
+
     code = request.args.get('code')
+    state = request.args.get('state')
+    expected_state = session.pop("google_oauth_state", None)
+    if not code:
+        return jsonify({"message": "Google did not return an authorization code"}), 400
+    if not state or not expected_state or not secrets.compare_digest(state, expected_state):
+        return jsonify({"message": "Invalid Google OAuth state"}), 400
+
     credentials = {
         "code": code,
-        "client_id": GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": "http://localhost:8081/api/login/callback",
+        "client_id": os.environ["GOOGLE_CLIENT_ID"],
+        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+        "redirect_uri": GOOGLE_CALLBACK_URI,
         "grant_type": "authorization_code",
     }
 
     # Intercambiar el cÃ³digo de autorizaciÃ³n por un token de acceso y un ID de cliente
-    response = requests.post(
-        f"https://oauth2.googleapis.com/token", data=credentials
-    )
-    token = google_get_user_info(response.json())
-    token_str = ''.join(map(str, token))
-    direccion = 'http://localhost:3000/inicio_exitoso_google?access_token=' + token_str
+    try:
+        response = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data=credentials,
+            timeout=20,
+        )
+        response.raise_for_status()
+        token_payload = response.json()
+        if "id_token" not in token_payload:
+            return jsonify({"message": "Google token response did not include an ID token"}), 502
+        token = google_get_user_info(token_payload)
+    except (requests.RequestException, ValueError, KeyError):
+        return jsonify({"message": "Google authentication could not be completed"}), 502
+
+    if not token:
+        return jsonify({"message": "Google identity could not be verified"}), 401
+
+    token_str = str(token)
+    direccion = f"{FRONTEND_GOOGLE_SUCCESS_URI}?{urlencode({'access_token': token_str})}"
     return redirect(direccion)
 
 # Esta función verifica la identidad del usuario y devuelve la información del usuario del token de Google en concreto
@@ -195,13 +265,13 @@ def google_get_user_info(token):
         id_info = id_token.verify_oauth2_token(
             id_token=token['id_token'],
             request=token_request,
-            audience=GOOGLE_CLIENT_ID
+            audience=os.environ["GOOGLE_CLIENT_ID"]
         )
 
         # Obtener el correo electrónico y la información del usuario
-        email = id_info['email']
-        nombre = id_info['name']
-        data = jsonify({'correo': email, 'nombre': nombre})
+        identity = google_identity_from_claims(id_info)
+        email = identity["email"]
+        nombre = identity["name"]
 
         #Comprobar si existe un usuario con ese correo y sino registrarlo en la base de datos
         user = collection.find_one({"correo": email})
@@ -216,9 +286,17 @@ def google_get_user_info(token):
             print('El usuario NO estaba registrado')
             return token_google
 
-    except ValueError:
-        # Si no se puede verificar la identidad del usuario, devuelve None
-        return None, None
+    except (ValueError, KeyError, google_auth_exceptions.GoogleAuthError) as error:
+        LOGGER.warning(
+            "Google identity verification failed (%s)",
+            type(error).__name__,
+        )
+        return None
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
 
 
 def get_jwt_identity(encoded_token):
@@ -244,7 +322,5 @@ if __name__ == '__main__':
     port = 4000
     instance_ip = "login"
 
-    #Hacemos que espere 30 segundos para que eureka pueda iniciar antes de que conecte
-    time.sleep(60)
     configure_eureka(app_name, eureka_server, port, instance_ip)
-    app.run(debug=True, port=port, host="0.0.0.0")
+    app.run(debug=False, port=port, host="0.0.0.0")

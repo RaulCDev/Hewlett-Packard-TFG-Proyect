@@ -1,6 +1,5 @@
 import asyncio
 import os
-import time
 from urllib.parse import urlencode
 import re
 
@@ -10,21 +9,27 @@ from functools import wraps
 from py_eureka_client.eureka_client import EurekaClient
 from pymongo import MongoClient
 
+try:
+    from .integrations import merge_runtime_source, rapidapi_integration_status
+except ImportError:
+    from integrations import merge_runtime_source, rapidapi_integration_status
+
 
 #Creamos la aplicacion de Flask
 app = Flask(__name__)
 #Llave secreta para los JWT
-SECRET_KEY = os.environ["JWT_SECRET_KEY"]
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "gameshop-development-jwt-secret-change-me")
 JWT_ALGORITHM = 'HS256'
 
 #Cambiamos en la configuracion de la aplicacion de Flask la la direccion de la base de datos mongo
-client = MongoClient(os.environ["MONGO_URI"])
+client = MongoClient(os.getenv("MONGO_URI", "mongodb://gameshop:gameshop-development-password@mongo:27017/"))
 
 #Nombre de la base de datos que creamos dentro del docker
 db = client['projectCDS']
 #Nombre del documento en el que vamos a guardar a los usuarios
 collection_juegos = db['juegos']
 collection_usuarios = db['usuarios']
+collection_integration_status = db['integration_status']
 
 
 def jwt_required(fn):
@@ -96,7 +101,7 @@ def format_game(game):
 @jwt_required
 def games():
     # Obtén los 50 juegos con la puntuación más alta sin el campo _id
-    top_games = list(collection_juegos.find({"released": {"$nin": ["Coming soon", "To be announced"]}}, {'_id': 0}).sort([('porcentaje_votos', -1)]).limit(50))
+    top_games = list(collection_juegos.find({"released": {"$nin": ["Coming soon", "To be announced"]}}, {'_id': 0}).sort([('reviewPercentage', -1)]).limit(50))
     lista_juegos = [format_game(juego) for juego in top_games]
     return jsonify(lista_juegos)  # Usa jsonify para convertir la lista en una respuesta JSON válida
 
@@ -186,6 +191,23 @@ def data():
         return {'message': 'Hay mas de uno o ningun resultado, cuando solo se quiere uno'}
 
 
+@app.route('/integration-status', methods=['GET'])
+def integration_status():
+    status = rapidapi_integration_status(os.environ)
+    runtime_status = collection_integration_status.find_one(
+        {"service": "rapidapi"},
+        {"_id": 0, "source": 1},
+    )
+    return jsonify(
+        merge_runtime_source(status, (runtime_status or {}).get("source"))
+    )
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"})
+
+
 #Funcion que nos conecta al servicio de erureka y en la que le decimos en que puerto esta escuchando el microservicio
 def configure_eureka(app_name, eureka_server, port, instance_ip):
     async def start_eureka_client():
@@ -202,7 +224,5 @@ if __name__ == '__main__':
     port = 4001
     instance_ip = "datos"
 
-    #Hacemos que espere 30 segundos para que eureka pueda iniciar antes de que conecte
-    time.sleep(60)
     configure_eureka(app_name, eureka_server, port, instance_ip)
-    app.run(debug=True, port=port, host="0.0.0.0")
+    app.run(debug=False, port=port, host="0.0.0.0")
