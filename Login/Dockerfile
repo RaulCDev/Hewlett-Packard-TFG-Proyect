@@ -1,17 +1,9 @@
 # Use an official Python runtime as a parent image
-FROM python:3.9
-
-# Set the working directory to /app
+FROM python:3.9-slim-bookworm
 WORKDIR /app
-
-# Copy the current directory contents into the container at /app
-COPY . /app
-
-# Install any needed packages specified in requirements.txt
-RUN pip install -r requirements.txt
-
-# Expose the port the app runs on
-EXPOSE 4001
-
-# Run the Python script when the container launches
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 4000
 CMD ["python", "app.py"]

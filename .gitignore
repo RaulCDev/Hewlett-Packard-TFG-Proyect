@@ -28,6 +28,8 @@ front-next/build/Release
 
 # Dependency directories
 front-next/node_modules
+front-next/.npm-cache
+front-next/.next
 
 # Local secrets
 .env
@@ -38,4 +40,7 @@ front-next/node_modules
 data/
 **/__pycache__/
 *.py[cod]
+
+# Original local recording (the optimized copy lives in docs/assets)
+/Grabacion Funcionamiento.mp4
 

@@ -7,7 +7,9 @@ const SuccessfulGoogleLogin = () => {
         const token = urlParams.get('access_token');
 
         // Envía el token a la ventana principal
-        window.opener.postMessage({ access_token: token }, '*');
+        if (window.opener && token) {
+            window.opener.postMessage({ access_token: token }, window.location.origin);
+        }
 
         // Cierra la ventana emergente
         window.close();

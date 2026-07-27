@@ -1,22 +1,20 @@
-# Use the official Node.js 14 image
-FROM node:18
+FROM node:18-bookworm-slim
 
-# Set the working directory
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy package.json and package-lock.json before other files
-# Utilise Docker cache to save re-installing dependencies if unchanged
 COPY package*.json ./
+RUN npm ci
 
-# Install dependencies
-RUN npm install
-RUN npm install -g next
-
-# Copy all files
 COPY . .
 
-# Expose the listening port
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8081/api
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+ENV NODE_ENV=production
+
 EXPOSE 3000
 
-# Run npm run dev command
-CMD [ "npm", "run", "dev" ]
+CMD ["npm", "run", "start"]

@@ -1,14 +1,18 @@
-# Use an official OpenJDK runtime as a parent image
-FROM openjdk:11-jdk-slim
+FROM maven:3.9-eclipse-temurin-11 AS build
 
-# Set the working directory to /app
+WORKDIR /workspace
+
+COPY pom.xml ./
+COPY src ./src
+
+RUN mvn -B -DskipTests package
+
+FROM eclipse-temurin:11-jre-jammy
+
 WORKDIR /app
 
-# Copy the current directory contents into the container at /app
-COPY . /app
+COPY --from=build /workspace/target/*.jar app.jar
 
-# Expose the port the app runs on
 EXPOSE 8081
 
-# Run the Spring Boot app
-ENTRYPOINT ["./mvnw", "spring-boot:run"]
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

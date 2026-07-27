@@ -1,17 +1,18 @@
-# Utiliza una imagen oficial de OpenJDK como imagen base
-FROM openjdk:11-jdk
+FROM maven:3.9-eclipse-temurin-11 AS build
 
-# Establece el directorio de trabajo en /app
+WORKDIR /workspace
+
+COPY pom.xml ./
+COPY src ./src
+
+RUN mvn -B -DskipTests package
+
+FROM eclipse-temurin:11-jre-jammy
+
 WORKDIR /app
 
-# Copia el directorio completo del proyecto en el contenedor en /app
-COPY . /app
+COPY --from=build /workspace/target/*.jar app.jar
 
-# Expone el puerto en el que se ejecuta la aplicación
 EXPOSE 8761
 
-# Instala Maven si es necesario
-RUN apt-get update && apt-get install -y maven
-
-# Ejecuta la aplicación usando Maven
-CMD ["mvn", "spring-boot:run"]
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
